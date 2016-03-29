@@ -1,25 +1,27 @@
 require 'nokogiri'
 require 'open-uri'
 require 'fileutils'
+require 'logger'
 
 class HotlineParser
-  IMAGES_FOLDER = 'images'.freeze
-  private_constant :IMAGES_FOLDER
+  IMAGES_FOLDER = 'images'
 
-  attr_reader :url, :uri
+  attr_reader :url, :uri, :page, :queue
 
   def initialize(url)
     @url = url
     @uri = URI.parse(url)
+    @queue = Queue.new
+    @page = Nokogiri::HTML(open(url))
   end
 
   def most_cheapest
-    product = products.min { |a,b| a[:price] <=> b[:price] }
+    product = products.min{ |a,b| a[:price] <=> b[:price] }
     "Most cheapest - #{product[:name]} - #{product[:price]}"
   end
 
   def most_expensive
-    product = products.max { |a,b| a[:price] <=> b[:price] }
+    product = products.max{ |a,b| a[:price] <=> b[:price] }
     "Most expensive - #{product[:name]} - #{product[:price]}"
   end
 
@@ -28,14 +30,15 @@ class HotlineParser
   end
 
   def save_images(thread_count = 10)
-    FileUtils.mkdir_p(IMAGES_FOLDER) unless File.directory?(IMAGES_FOLDER)
+    create_dir
+    init_queue
+    run_downloads(thread_count)
+  end
 
-    queue = Queue.new
+  private
+
+  def run_downloads(thread_count)
     threads = []
-
-    products.each do |product|
-      queue << product unless File.exist?(file_path(product))
-    end
 
     thread_count.times.map do
       threads << Thread.new do
@@ -48,17 +51,35 @@ class HotlineParser
     end
 
     threads.each(&:join)
+  rescue => e
+    log "Exception occured while downloading images: #{e}"
   end
 
-  private
+  def init_queue
+    products.each do |product|
+      queue << product unless File.exist?(file_path(product))
+    end
+  end
+
+  def log(msg)
+    logger.info(msg)
+  end
+
+  def logger
+    @logger ||= Logger.new('parser.log')
+  end
+
+  def create_dir
+    FileUtils.mkdir_p(IMAGES_FOLDER) unless File.directory?(IMAGES_FOLDER)
+  end
 
   def file_path(product)
     ext = File.extname(product[:image_url])
-    "#{IMAGES_FOLDER}/#{file_name(product)}#{ext}"
+    "#{IMAGES_FOLDER}/#{product[:file_name]}#{ext}"
   end
 
-  def file_name(product)
-    match_data = product[:name].match(/(?<name>[^\s]*) (?<id>.*)/)
+  def file_name(name)
+    match_data = name.match(/(?<name>[^\s]*) (?<id>.*)/)
     id = match_data[:id].split.map(&:downcase).join('_').gsub(/[\/-]/, '_')
     name = match_data[:name].downcase
     "#{name}-#{id}"
@@ -68,16 +89,14 @@ class HotlineParser
     "#{uri.scheme}://#{uri.host}#{url}"
   end
 
-  def page
-    @page ||= Nokogiri::HTML(open(url))
-  end
-
   def products
     @products ||= begin
       product_lis = page.xpath('//ul[contains(@class, "catalog")]//li')
       product_lis.map do |product_li|
+        name = product_li.xpath('div[contains(@class, "info")]//div[contains(@class, "ttle")]/a/text()').text.strip
         {
-          name:      product_li.xpath('div[contains(@class, "info")]//div[contains(@class, "ttle")]/a/text()').text.strip,
+          file_name: file_name(name),
+          name:      name,
           image_url: format_image_url(product_li.xpath('div[contains(@class, "img-box")]/a/div/img/@src').to_s),
           price:     product_li.xpath('div[contains(@class, "price")]/span[contains(@class, "orng")]/text()').text.strip.gsub(/[^\d]/, '').to_i
         }
