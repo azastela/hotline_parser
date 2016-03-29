@@ -27,7 +27,7 @@ class HotlineParser
     products.reduce(0){ |avg, product| avg += product[:price] } / products.count
   end
 
-  def save_images(thread_count = 4)
+  def save_images(thread_count = 10)
     FileUtils.mkdir_p(IMAGES_FOLDER) unless File.directory?(IMAGES_FOLDER)
 
     queue = Queue.new
@@ -74,12 +74,12 @@ class HotlineParser
 
   def products
     @products ||= begin
-      product_lis = page.css('ul.catalog li')
+      product_lis = page.xpath('//ul[contains(@class, "catalog")]//li')
       product_lis.map do |product_li|
         {
-          name:      product_li.css('.info .ttle > a').text().strip,
-          image_url: format_image_url(product_li.xpath('*[contains(@class, "img-box")]/a/div/img/@src').to_s),
-          price:     product_li.xpath('*[contains(@class, "price")]/span[contains(@class, "orng")]/text()').text.strip.gsub(/[^\d]/, '').to_i
+          name:      product_li.xpath('div[contains(@class, "info")]//div[contains(@class, "ttle")]/a/text()').text.strip,
+          image_url: format_image_url(product_li.xpath('div[contains(@class, "img-box")]/a/div/img/@src').to_s),
+          price:     product_li.xpath('div[contains(@class, "price")]/span[contains(@class, "orng")]/text()').text.strip.gsub(/[^\d]/, '').to_i
         }
       end
     end
